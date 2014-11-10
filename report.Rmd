@@ -1,0 +1,100 @@
+---
+title: "Practical Machine Learning Course Project Report"
+author: "QIU Hongxiang"
+output: html_document
+---
+
+##Introduction
+
+This report aims to take the Weight Lifting Exercise Dataset (see http://groupware.les.inf.puc-rio.br/har for more information) and build a model using machine learning methods to predict the manner in which people do the exercise. I first build a model from the training dataset and then estimate the out of sample error by applying it to the test dataset.
+
+##Exploratory Analysis & Data Processing
+
+Download data:
+
+```{r,eval=FALSE}
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv","pml-training.csv")
+```
+
+Load data:
+
+```{r,cache=TRUE}
+data<-read.csv("pml-training.csv")
+```
+
+Following tradition, partition the dataset into training and testing dataset where training dataset contains 60% of the observations.
+```{r,cache=TRUE}
+library(caret)
+set.seed(123)
+inTrain<-createDataPartition(data$classe,p = .6,list = FALSE)
+training<-data[inTrain,]
+testing<-data[-inTrain,]
+rm(data,inTrain)
+```
+
+First go through the variable names by running `names(training)`. The response variable in the model to be built is called "classe" meaning the manner people do exercise. By common sense, one can claim "classe" should not be related to "X", the row number, and "user_name". Plot and make a table to verify:
+
+```{r,cache=TRUE,fig.height=3,fig.width=4}
+library(ggplot2)
+qplot(x=X,,y=classe,data=training)
+table(training$user_name,training$classe)
+```
+
+Although one can see "X" seems to be a greatly useful predictor, this clear relation may be caused by the particular way the data were recorded and it should not matter in prediction in general; it is good that the table looks quite random. Therefore, I exclude these two variables from dataset:
+
+```{r,cache=TRUE}
+training$X<-NULL
+training$user_name<-NULL
+```
+
+By running `str(training)` and `summary(training)`, one can see some variables have many NAs or simply nothing for many observations. I consider the variables with more than 95% of missing values useless because typically these data are missing and cannot provide any information for prediction.
+
+```{r,cache=TRUE}
+logi<-sapply(training,function(x){
+    if(class(x)=="factor" && "" %in% levels(x) && sum(x=="")/length(x)>.95)
+        return(FALSE)
+    else if(sum(is.na(x))/length(x)>.95)
+        return(FALSE)
+    TRUE
+    })
+training<-training[,logi]
+```
+
+##Model Building
+
+It is hard to immediately see the relationship between "classe" and other crazy variables. Hence, I decide to use random forest to use random forest, boosting and linear discriminant analysis to build three models because they require less knowledge about the data, and then use random forest to combine their predictions to obtain the final prediction for smaller out of sample error. This method requires considerable computation, so I let the number of folds or iterations be 4 rather than the default 10 to speed up. This change will also introduce less bias to the model.
+
+
+```{r,cache=TRUE,results='hide',warning=FALSE}
+set.seed(2014)
+modelRF<-train(classe~.,data=training,method="rf",trControl = trainControl(number=4))
+modelGBM<-train(classe~.,data=training,method="gbm",trControl = trainControl(number=4))
+modelLDA<-train(classe~.,data=training,method="lda",trControl = trainControl(number=4))
+predRF<-predict(modelRF,training)
+predGBM<-predict(modelGBM,training)
+predLDA<-predict(modelLDA,training)
+training2<-data.frame(classe=training$classe,x1=predRF,x2=predGBM,x3=predLDA)
+modelCOM<-train(classe~.,data=training2,method="rf",trControl = trainControl(number=4))
+```
+
+Check how this model works on the training dataset to get an optimistic estimate of error:
+
+```{r,cache=TRUE}
+confusionMatrix(predict(modelCOM,training2),training$classe)
+```
+
+The optimistic error rate is 0.
+
+##Estimate Out of Sample Error
+
+Apply the model to the testing dataset and get the out of sample error:
+
+```{r,cache=TRUE}
+PredRF<-predict(modelRF,testing)
+PredGBM<-predict(modelGBM,testing)
+PredLDA<-predict(modelLDA,testing)
+testing2<-data.frame(x1=PredRF,x2=PredGBM,x3=PredLDA)
+sum(predict(modelCOM,testing2)!=testing$classe)/nrow(testing)
+```
+
+The expected out of sample error is only 0.0007647209, so this model works quite well.
